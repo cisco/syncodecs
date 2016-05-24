@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright 2014-2015 cisco Systems, Inc.                                    *
+ * Copyright 2014-2016 cisco Systems, Inc.                                    *
  *                                                                            *
  * Licensed under the Apache License, Version 2.0 (the "License");            *
  * you may not use this file except in compliance with the License.           *
@@ -35,7 +35,7 @@
 
 #define INITIAL_RATE 100.  // Initial (very low) target rate set by default in codecs
 #define EPSILON 1e-10  // Used to check floats/doubles for zero
-#define RAND_UNIFORM_MAX_RATIO .1  // Width of random variation (noise) in frame size (=10%)
+#define RAND_UNIFORM_MAX_RATIO .10  // Width of random variation (noise) in frame size (=10%)
 
 namespace syncodecs {
 
@@ -86,6 +86,24 @@ CodecWithFps::CodecWithFps(double fps) : Codec(), m_fps(fps) {
 }
 
 CodecWithFps::~CodecWithFps() {}
+
+
+
+const float CodecWithFpsAndRandomness::m_randMaxRatio = RAND_UNIFORM_MAX_RATIO;
+
+CodecWithFpsAndRandomness::CodecWithFpsAndRandomness(double fps) : CodecWithFps(fps) {
+}
+
+CodecWithFpsAndRandomness::~CodecWithFpsAndRandomness() {}
+
+float CodecWithFpsAndRandomness::addNoiseDefault(float size) {
+    size += size * uniform(-m_randMaxRatio, m_randMaxRatio);
+    return size;
+}
+
+double CodecWithFpsAndRandomness::uniform(double min, double max) {
+    return ((double)rand() / (double)RAND_MAX) * (max - min) + min;
+}
 
 
 
@@ -529,7 +547,6 @@ void ShapedPacketizer::nextPacketOrFrame() {
 
 
 
-const float StatisticsCodec::m_randMaxRatio = RAND_UNIFORM_MAX_RATIO;
 
 
 StatisticsCodec::StatisticsCodec(double fps,
@@ -539,7 +556,8 @@ StatisticsCodec::StatisticsCodec(double fps,
                                  float bigChangeRatio,
                                  unsigned int transientLength,
                                  float iFrameRatio) :
-        CodecWithFps(fps), m_maxUpdateRatio(maxUpdateRatio), m_updateInterval(updateInterval),
+        CodecWithFpsAndRandomness(fps), m_maxUpdateRatio(maxUpdateRatio),
+        m_updateInterval(updateInterval),
         m_bigChangeRatio(bigChangeRatio), m_transientLength(transientLength),
         m_iFrameRatio(iFrameRatio), m_timeToUpdate(0.),
         m_remainingBurstFrames (transientLength), // Start with a burst
@@ -554,15 +572,6 @@ StatisticsCodec::StatisticsCodec(double fps,
 }
 
 StatisticsCodec::~StatisticsCodec() {}
-
-float StatisticsCodec::addNoiseDefault(float size) {
-    size += size * uniform(-m_randMaxRatio, m_randMaxRatio);
-    return size;
-}
-
-double StatisticsCodec::uniform(double min, double max) {
-    return ((double)rand() / (double)RAND_MAX) * (max - min) + min;
-}
 
 float StatisticsCodec::setTargetRate(float newRateBps) {
     if (newRateBps < EPSILON || m_timeToUpdate > EPSILON) {
@@ -622,5 +631,53 @@ void StatisticsCodec::nextPacketOrFrame() {
 
     m_timeToUpdate = std::max(0., m_timeToUpdate - secsToNextFrame);
 }
+
+
+
+
+
+SimpleContentSharingCodec::SimpleContentSharingCodec(double fps,
+                                 unsigned long noChangeMaxSize,
+                                 float bigFrameProb,
+                                 float bigFrameRatioMin,
+                                 float bigFrameRatioMax) :
+        CodecWithFpsAndRandomness(fps),
+        m_noChangeMaxSize(noChangeMaxSize),
+        m_bigFrameProb(bigFrameProb),
+        m_bigFrameRatioMin(bigFrameRatioMin),
+        m_bigFrameRatioMax(bigFrameRatioMax),
+        m_first(true) {
+    assert(m_noChangeMaxSize > 0);
+    assert(m_bigFrameProb > -EPSILON); // >= 0%
+    assert(m_bigFrameProb <= 1.); // <= 100%
+    assert(m_bigFrameRatioMin > -EPSILON); // >= 0
+    assert(m_bigFrameRatioMax > -EPSILON); // >= 0
+    nextPacketOrFrame(); //Read first frame
+    assert(isValid());
+}
+
+SimpleContentSharingCodec::~SimpleContentSharingCodec() {}
+
+void SimpleContentSharingCodec::nextPacketOrFrame() {
+    float frameBytes = m_targetRate / (m_fps * 8.f);
+
+    // Cap bytes to maximum small packet size
+    frameBytes = std::min(frameBytes, (float)m_noChangeMaxSize);
+
+    // Time for a big frame?
+    if (m_first || uniform(0., 1.) < m_bigFrameProb) {
+        m_first = false;
+        frameBytes *= uniform(m_bigFrameRatioMin, m_bigFrameRatioMax);
+    }
+
+    // Should have at least 1 byte to send
+    frameBytes = std::max(1.f, frameBytes);
+
+    const double secsToNextFrame = 1. / m_fps;
+
+    m_currentPacketOrFrame.first.resize((size_t)frameBytes, 0);
+    m_currentPacketOrFrame.second = secsToNextFrame;
+}
+
 
 }

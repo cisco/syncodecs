@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright 2014-2015 cisco Systems, Inc.                                    *
+ * Copyright 2014-2016 cisco Systems, Inc.                                    *
  *                                                                            *
  * Licensed under the Apache License, Version 2.0 (the "License");            *
  * you may not use this file except in compliance with the License.           *
@@ -222,6 +222,37 @@ public:
 
 protected:
     float m_fps; /**< Current value of the number of frames per second (fps). */
+};
+
+/**
+ * This abstract class is the superclass of all fps-based Codecs that have some randomness in their
+ * calculations.
+ *
+ * Typically, codecs that inherit from this class can use this class's protected members that
+ * generate some random numbers/distributions.
+ */
+class CodecWithFpsAndRandomness : public CodecWithFps {
+public:
+    /**
+     * Class constructor.
+     *
+     * @param [in] fps The number of frames per second at which the codec is to operate.
+     */
+    CodecWithFpsAndRandomness(double fps);
+
+    /** Class destructor. Called after the subclasses' destructor is called */
+    virtual ~CodecWithFpsAndRandomness();
+
+protected:
+    /** Default implementation of the noise function applied to frame sizes */
+    static float addNoiseDefault(float origSize);
+    /** Returns a random number between low and high, following a uniform distribution */
+    static double uniform(double low, double high);
+
+    /**
+     * Defines the width of the uniform distribution used as default noise function callback.
+     */
+    static const float m_randMaxRatio;
 };
 
 /**
@@ -790,7 +821,7 @@ private:
  * for the next #m_updateInterval seconds.
  */
 
-class StatisticsCodec : public CodecWithFps {
+class StatisticsCodec : public CodecWithFpsAndRandomness {
 public:
     typedef float (*AddNoiseFunc)(float); /**< Typedef of the callback for modeling noise. */
 
@@ -839,8 +870,8 @@ public:
      *
      * @note In future versions, we are considering promoting rules (1) and (2) mentioned above
      *       to the #setTargetRate implementation of abstract class #CodecWithFps. This way,
-     *       other codecs (not packetizers, does not make sense for them) can benefit from this
-     *       extended behavior.
+     *       other codecs (not packetizers, as it does not make sense for them) can benefit from
+     *       this extended behavior.
      */
     virtual float setTargetRate(float newRateBps);
 
@@ -856,17 +887,65 @@ protected:
     double m_timeToUpdate; /**< Time remaining until next target rate update will be accepted. */
     unsigned int m_remainingBurstFrames; /** # of frames left in current transient phase. */
 
-    /** Default implementation of the noise function applied to frame sizes */
-    static float addNoiseDefault(float origSize);
-
-    /**
-     * Defines the width of the uniform distribution used as default noise function callback.
-     */
-    static const float m_randMaxRatio;
-
 private:
-    static double uniform(double low, double high);
     AddNoiseFunc m_addNoise;
+};
+
+/**
+ * This synthetic codec simulates the frame sizes that result from encoding a content sharing video,
+ * e.g., a slide deck being shared in a meeting with remote participants.
+ *
+ * The frame rate is typically very low (default: 5 fps) although its value can be configured.
+ *
+ * There are two types of frames. The first type are small frames, called "no change" frames, which
+ * are typically P-frames that represent frames being encoded when there is no change in the content
+ * being shared. The second type of frames are big frames, which are typically I-frames that represent
+ * a change in the shared content (e.g., the user changed the current slide). The probability for any
+ * frame to be a big (I-)frame should be low (default: 0.05) although it is configurable through
+ * #m_bigFrameProb . In any case, the first frame in the sequence is always a big frame.
+ *
+ * The maximum size of small frames is #m_noChangeMaxSize . If the current target rate is very low
+ * the size of small frames will be shrunk so that the codec conforms to the target rate.
+ *
+ * The size of big frames is calculated as follows. A first size, <i>s_0</i>, is calculated as though it
+ * was a small frame (see previous paragraph). Then a multiplier <i>m</i> is obtained from the uniform
+ * random distribution [#m_bigFrameRatioMin , #m_bigFrameRatioMax ]. Finally, multiplier <i>m</i>
+ * is applied to the initial size <i>s_0</i>.
+ */
+
+class SimpleContentSharingCodec : public CodecWithFpsAndRandomness {
+public:
+    /**
+     * Class constructor.
+     *
+     * @param [in] fps The number of frames per second at which the codec is to operate.
+     * @param [in] noChangeMaxSize The maximum size of a ("no change") frame regardless of the
+     *                             target rate.
+     *                         (P-frame) produced while in steady state.
+     * @param [in] bigFrameProb Probability of a frame to be a big (I-)frame
+     * @param [in] bigFrameRatioMin Minimum size of a big (I-)frame in terms of ratio to a
+     *                              ("no change") frame produced when content did not change.
+     * @param [in] bigFrameRatioMax Maximum size of a big (I-)frame in terms of ratio to a
+     *                              ("no change") frame produced when content did not change.
+     */
+    SimpleContentSharingCodec(double fps = 5., // default fps for content sharing
+                              unsigned long noChangeMaxSize = 1000, // bytes
+                              float bigFrameProb = .05,
+                              float bigFrameRatioMin = 50.,
+                              float bigFrameRatioMax = 400.);
+
+    /** Class destructor. Called after the subclasses' destructor is called */
+    virtual ~SimpleContentSharingCodec();
+
+protected:
+    /** Internal implementation of the statistics-based codec. */
+    virtual void nextPacketOrFrame();
+
+    unsigned long m_noChangeMaxSize; /**< Maximum size of a "no change" frame. */
+    float m_bigFrameProb; /**< Probability for a frame to be big. */
+    float m_bigFrameRatioMin; /**< Minimum ratio of a big frame to a "no change" frame. */
+    float m_bigFrameRatioMax; /**< Maximum ratio of a big frame to a "no change" frame. */
+    float m_first; /**< Denotes whether the current frame is the first in the sequence. */
 };
 
 } /* namespace syncodecs */
@@ -888,6 +967,7 @@ private:
  * #include <cassert>
  * #include <iostream>
  * #include <iomanip>
+ * #include <unistd.h>
  *
  * #define MAX_PKT_SIZE 1000 // bytes
  *
@@ -897,36 +977,52 @@ private:
  *     assert(result == rate * 1e6f);
  * }
  *
- * void playCodec(syncodecs::Codec& myCodec, unsigned int framesPerRate, int nframes) {
+ * void playCodec(syncodecs::Codec& myCodec, unsigned int framesPerRate, int nframes, unsigned int slowDown) {
  *     for (int i = 0; i < nframes; ++i) {
  *         if (i % framesPerRate == 0) {
  *             setRate(myCodec, i / framesPerRate + 1);
  *         }
  *         ++myCodec;
- *         std::cout << "      Time for frame #" << i << ", size: " << myCodec->first.size() << std::endl;
+ *         std::cout << "      Time for frame/packet #" << i << ", size: "
+ *                   << myCodec->first.size() << std::endl;
  *         std::cout << "        waiting " << std::setprecision(2) << myCodec->second * 1000.
  *                   << " ms..." << std::endl;
- *         usleep(myCodec->second * 1e8);
+ *         usleep(myCodec->second * 1e6 * slowDown);
  *     }
  * }
  *
  * int main(int argc, char** argv) {
- *     std::cout << "Playing the behavior of various codecs in slow motion (100x slower)..." << std::endl;
+ *     std::cout << "Playing the behavior of various codecs in slow motion..." << std::endl;
+ *     std::cout << std::fixed;
  *
- *     std::cout << "  Perfect codec:" << std::endl;
+ *     const unsigned int slow1 = 100;
+ *     std::cout << "  Perfect codec. "
+ *               << slow1 << "x slower:" << std::endl;
  *     std::auto_ptr<syncodecs::Codec> codec1(new syncodecs::PerfectCodec(MAX_PKT_SIZE));
- *     playCodec(*codec1, 10, 200);
+ *     playCodec(*codec1, 10, 200, slow1);
  *
+ *     const unsigned int slow2 = 50;
  *     std::cout << std::endl << std::endl;
- *     std::cout << "  Simple fps-based codec (unwrapped):" << std::endl;
+ *     std::cout << "  Simple fps-based codec (unwrapped). "
+ *               << slow2 << "x slower:" << std::endl;
  *     std::auto_ptr<syncodecs::Codec> codec2(new syncodecs::SimpleFpsBasedCodec(30.));
- *     playCodec(*codec2, 5, 20);
+ *     playCodec(*codec2, 5, 20, slow2);
  *
+ *     const unsigned int slow3 = 50;
  *     std::cout << std::endl << std::endl;
- *     std::cout << "  Simple fps-based codec (wrapped in the shaped packetizer):" << std::endl;
- *     syncodecs::Codec* inner = new syncodecs::SimpleFpsBasedCodec(30.);
- *     std::auto_ptr<syncodecs::Codec> codec3(new syncodecs::ShapedPacketizer(inner, MAX_PKT_SIZE));
- *     playCodec(*codec3, 10, 200);
+ *     std::cout << "  Simple fps-based codec (wrapped in the shaped packetizer). "
+ *               << slow3 << "x slower:" << std::endl;
+ *     syncodecs::Codec* inner3 = new syncodecs::SimpleFpsBasedCodec(30.);
+ *     std::auto_ptr<syncodecs::Codec> codec3(new syncodecs::ShapedPacketizer(inner3, MAX_PKT_SIZE));
+ *     playCodec(*codec3, 10, 200, slow3);
+ *
+ *     const unsigned int slow4 = 5;
+ *     std::cout << std::endl << std::endl;
+ *     std::cout << "  Simple content sharing codec (wrapped in the shaped packetizer). "
+ *               << slow4 << "x slower:" << std::endl;
+ *     syncodecs::Codec* inner4 = new syncodecs::SimpleContentSharingCodec();
+ *     std::auto_ptr<syncodecs::Codec> codec4(new syncodecs::ShapedPacketizer(inner4, MAX_PKT_SIZE));
+ *     playCodec(*codec4, 50, 500, slow4);
  *
  *     return 0;
  * }
@@ -937,7 +1033,7 @@ private:
  *
  * In the second example, we demonstrate how one can simulate two different codecs, running
  * concurrently, with only one simulation thread. In this example we have chosen to use
- * a more advance codec setup, in order to demonstrate the usage of the trace-based and the
+ * a more advanced codec setup, in order to demonstrate the usage of the trace-based and the
  * statistics codecs and the shaped packetizer.
  * Sample code:
  * @code
