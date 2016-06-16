@@ -529,7 +529,7 @@ void ShapedPacketizer::nextPacketOrFrame() {
     assert(m_secsToNextFrame >= 0);
 
     // m_payloadSize is interpreted here as "max payload size"
-    const unsigned long payloadSize = std::min(m_payloadSize, m_bytesToSend.size());
+    const unsigned long payloadSize = std::min<long unsigned int>(m_payloadSize, m_bytesToSend.size());
     const double packetsToSend = std::ceil((double)m_bytesToSend.size() / (double)(m_payloadSize));
     assert(packetsToSend >= 1.);
     const double secsToNextPacket = m_secsToNextFrame / packetsToSend;
