@@ -931,8 +931,8 @@ public:
     SimpleContentSharingCodec(double fps = 5., // default fps for content sharing
                               unsigned long noChangeMaxSize = 1000, // bytes
                               float bigFrameProb = .05,
-                              float bigFrameRatioMin = 50.,
-                              float bigFrameRatioMax = 400.);
+                              float bigFrameRatioMin = 20.,
+                              float bigFrameRatioMax = 200.);
 
     /** Class destructor. Called after the subclasses' destructor is called */
     virtual ~SimpleContentSharingCodec();
