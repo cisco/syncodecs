@@ -37,7 +37,7 @@ void LineRecord::Field<char>::checkReadStrCompletely(const std::istringstream& s
 
 LineRecord::LineRecord(std::istringstream& stream) :
     m_frameNumber(stream), m_frameType(stream),
-    m_qp(stream), m_psnr(stream), m_size(stream) {}
+    m_qp(stream), m_ts(stream), m_size(stream) {}
 
 FrameDataIterator::FrameDataIterator() : m_input(NULL), m_line() {}
 

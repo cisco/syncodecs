@@ -374,9 +374,9 @@ protected:
  *   <li> <i>prefix</i> is an arbitrary string, but the same for all files. </li>
  *   <li> <i>resolution</i> is the fixed output resolution configured to encode the video
  *        sequence offline. It must be one of the following strings:
- *        "90p", "180p", "240p", "360p", "480p", "540p", "720p", and "1080p";
- *        which correspond respectively to the following pixel resolutions:
- *        160x90, 320x180, 352x240, 640x360, 640x480, 960x540, 1280x720, and 1920x1080. </li>
+ *        "90p", "180p", "240p", "360p", "540p", "720p", and "1080p";
+ *        which correspond respectively to the following 16:9 pixel resolutions:
+ *        160x90, 320x180, 426x240, 640x360, 960x540, 1280x720, and 1920x1080. </li>
  *   <li> <i>target-bitrate</i> is the fixed target bitrate configured in the real video codec
  *        when encoding the video sequence offline. It is an integer denoting kilobits per
  *        second (kbps). The current implementation requires the target bitrate value to be
@@ -439,10 +439,10 @@ protected:
  * the bits available on average to encode a pixel are too many (above #m_highBppThresh ) the
  * resolution is decreased to the next one containing video traces.
  *
- * The bits per pixel idea works well for resolutions smaller than 480p, for bigger resolutions the
+ * The bits per pixel idea works well for resolutions smaller than 540p, for bigger resolutions the
  * codec uses the power of .75 rule, proposed by Ben Waggoner. This rule calculates the bits per
- * pixel of resolution X by taking the bits per pixel results for 480p and applying the following
- * scaling factor: ( # of pixels in a resolution X frame / # of pixels in a 480p frame )^.75
+ * pixel of resolution X by taking the bits per pixel results for 540p and applying the following
+ * scaling factor: ( # of pixels in a resolution X frame / # of pixels in a 540p frame )^.75
  *
  * @note For an extensive description on the algorithm behind the trace-based codec,
  *       see IETF draft draft-zhu-rmcat-video-traffic-source.
@@ -567,7 +567,7 @@ protected:
      * @param [out] scalingFactor The scaling factor returned.
      * @param [out] targetPixelsPerFrame The number of pixels in a frame of the current
      *                                   resolution. If the current resolution is bigger than
-     *                                   480p, the result for 480p is returned instead.
+     *                                   540p, the result for 540p is returned instead.
      */
     void getBppData(double& scalingFactor, double& targetPixelsPerFrame) const;
 

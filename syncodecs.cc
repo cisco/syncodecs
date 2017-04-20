@@ -173,11 +173,11 @@ TraceBasedCodec::TraceBasedCodec(const std::string& path,
     public:
         FillResolutions_() {
             assert(m_labels2Res.empty());
+            // All resolutions have 16:9 aspect ratio
             addLabelAndResolution("90p", std::make_pair(160, 90));
             addLabelAndResolution("180p", std::make_pair(320, 180));
-            addLabelAndResolution("240p", std::make_pair(352, 240));
+            addLabelAndResolution("240p", std::make_pair(426, 240));
             addLabelAndResolution("360p", std::make_pair(640, 360));
-            addLabelAndResolution("480p", std::make_pair(640, 480));
             addLabelAndResolution("540p", std::make_pair(960, 540));
             addLabelAndResolution("720p", std::make_pair(1280, 720));
             addLabelAndResolution("1080p", std::make_pair(1920, 1080));
@@ -189,7 +189,7 @@ TraceBasedCodec::TraceBasedCodec(const std::string& path,
         setFixedMode(true); // Start with the middle resolution
     }
     assert(traceDataIsValid());
-    m_limitPixelsPerFrame = getPixelsPerFrame("480p");
+    m_limitPixelsPerFrame = getPixelsPerFrame("540p");
     nextPacketOrFrame(); //Read first frame
     assert(isValid());
 }
@@ -323,7 +323,7 @@ double TraceBasedCodec::getPixelsPerFrame(ResLabel resolution) {
 void TraceBasedCodec::getBppData(double& scalingFactor, double& targetPixelsPerFrame) const {
     double pixelsPerFrame = getPixelsPerFrame(*m_currentResIt);
 
-    // Above 480p, we apply Waggoner's ^.75 rule
+    // Above 540p, we apply Waggoner's ^.75 rule
     if (pixelsPerFrame > m_limitPixelsPerFrame) {
         scalingFactor = pow((pixelsPerFrame / m_limitPixelsPerFrame), .75);
         targetPixelsPerFrame = m_limitPixelsPerFrame;

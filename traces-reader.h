@@ -72,9 +72,9 @@ public:
         FTYPE m_data;
     };
     Field<unsigned int> m_frameNumber; /**< Frame number. */
-    Field<char> m_frameType;           /**< Frame type. I = I-frame; P = P-frame; B = B-frame. */
+    Field<char> m_frameType;           /**< Frame type. I = I-frame; P = P-frame; B = B-frame; U = Unknown. */
     Field<float> m_qp;                 /**< Quantization parameter used when encoding the frame. */
-    Field<float> m_psnr;               /**< PSNR obtained w.r.t. the original raw frame. */
+    Field<float> m_ts;                 /**< Timestamp when the frame was sent (in seconds). */
     Field<unsigned long> m_size;       /**< Frame size in bytes. */
     LineRecord(std::istringstream& stream);
 };
@@ -154,7 +154,7 @@ private:
  *         std::cout << "  Frame #" << record.m_frameNumber
  *                   << "; Type: " << record.m_frameType
  *                   << "; QP: " << record.m_qp
- *                   << "; PSNR: " << record.m_psnr
+ *                   << "; timestamp: " << record.m_ts
  *                   << "; Size (bytes): " << record.m_size
  *                   << std::endl;
  *         ++it;
