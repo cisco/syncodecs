@@ -803,14 +803,13 @@ private:
  * When there is a substantial change in the target rate, the codec enters transient phase.
  * The transient phase has fixed duration #m_transientLength expressed in frames. In the
  * transient phase, the first frame is an I-frame, and is modeled as a frame whose size
- * is #m_iFrameRatio times bigger than that of a frame in steady state. The size of the
-
-TODO
-
+ * is #m_iFrameSize bytes. This I-frame size tends to be much bigger than the reference frame
+ * size at the current target rate. This value has been observed to depend on the codec type,
+ * resolution and/or video sequence, but not on the current target bitrate. The size of the
  * remaining frames in the transient phase are made smaller to compensate for the I-frame's
  * size, so that, at the end of the transient period the average bitrate still fits the
- * target rate. These remaining frames in the transient phase will never be smaller than
- * 0.2 times the size of a steady frame, so if the I-frame is very big, or the transient
+ * target rate. In any case, these remaining frames in the transient phase will never be smaller
+ * than 0.2 times the size of a steady frame, so if the I-frame is very big, or the transient
  * period is very short, the average bitrate of the transient period might overshoot the
  * target rate.
  *
@@ -859,8 +858,7 @@ public:
      * @param [in] bigChangeRatio The threshold to consider a target rate update as substantial,
      *                            thereby triggering a new transient phase.
      * @param [in] transientLength Length of the transient phase in frames.
-     * @param [in] iFrameRatio Average size of an I-frame in terms of ratio to a normal frame
-     *                         (P-frame) produced while in steady state.
+     * @param [in] iFrameSize Reference size of an I-frame in bytes.
      * @param [in] addFrSizeNoise Callback implementation modeling the noise of frame sizes.
      * @param [in] addFrInterNoise Callback implementation modeling the noise of frame intervals.
      */
@@ -869,7 +867,7 @@ public:
                     double updateInterval = .1, // 100 ms
                     float bigChangeRatio = .5, // 50%
                     unsigned int transientLength = 10, // frames
-                    float iFrameRatio = 4.,
+                    unsigned long iFrameSize = 4.17 * 1024, // bytes
                     AddNoiseFunc addFrSizeNoise = &addLaplaceSize,
                     AddNoiseFunc addFrInterNoise = &addLaplaceInter);
 
@@ -905,7 +903,7 @@ protected:
     double m_updateInterval; /**< Interval in seconds between two consecutive rate updates. */
     float m_bigChangeRatio; /**< Minimum ratio old/new target rate to trigger transient phase. */
     unsigned int m_transientLength; /**< Length of a transient phase in terms of # of frames. */
-    float m_iFrameRatio; /**< Ratio of I-frame to normal frame (i.e., P-frame in steady phase). */
+    unsigned long m_iFrameSize; /**< Reference size in bytes of I-frame . */
     double m_timeToUpdate; /**< Time remaining until next target rate update will be accepted. */
     unsigned int m_remainingBurstFrames; /** # of frames left in current transient phase. */
 };

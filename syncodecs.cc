@@ -575,19 +575,21 @@ StatisticsCodec::StatisticsCodec(double fps,
                                  double updateInterval,
                                  float bigChangeRatio,
                                  unsigned int transientLength,
-                                 float iFrameRatio,
+                                 unsigned long iFrameSize,
                                  AddNoiseFunc addFrSizeNoise,
                                  AddNoiseFunc addFrInterNoise) :
         CodecWithFps(fps, addFrSizeNoise, addFrInterNoise),
         m_maxUpdateRatio(maxUpdateRatio),
         m_updateInterval(updateInterval),
-        m_bigChangeRatio(bigChangeRatio), m_transientLength(transientLength),
-        m_iFrameRatio(iFrameRatio), m_timeToUpdate(0.),
+        m_bigChangeRatio(bigChangeRatio),
+        m_transientLength(transientLength),
+        m_iFrameSize(iFrameSize),
+        m_timeToUpdate(0.),
         m_remainingBurstFrames (transientLength) { // Start with a burst
     assert(m_maxUpdateRatio > -EPSILON); // >= 0
     assert(m_updateInterval > -EPSILON); // >= 0
     assert(m_bigChangeRatio > EPSILON); // > 0
-    assert(m_iFrameRatio > EPSILON); // > 0
+    assert(m_iFrameSize > 0);
     nextPacketOrFrame(); //Read first frame
     assert(isValid());
 }
@@ -630,9 +632,10 @@ void StatisticsCodec::nextPacketOrFrame() {
     if (m_remainingBurstFrames > 0) {
         assert(m_transientLength > 0);
         if (m_remainingBurstFrames == m_transientLength) { // I frame
-            frameBytes *= m_iFrameRatio;
+            frameBytes = m_iFrameSize;
         } else {
-            float newRatio = float(m_transientLength) - m_iFrameRatio;
+            const float iFrameRatio = float(m_iFrameSize) / frameBytes;
+            float newRatio = float(m_transientLength) - iFrameRatio;
             newRatio /= float(m_transientLength - 1);
             newRatio = std::max(.2f, newRatio);
             frameBytes *= newRatio;
