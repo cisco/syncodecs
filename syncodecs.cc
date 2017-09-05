@@ -128,7 +128,7 @@ PerfectCodec::PerfectCodec(unsigned long payloadSize) :
 PerfectCodec::~PerfectCodec() {}
 
 void PerfectCodec::nextPacketOrFrame() {
-    const double secsToNextFrame = static_cast<double>(m_payloadSize) * 8. / m_targetRate;
+    const double secsToNextFrame = double(m_payloadSize) * 8. / m_targetRate;
 
     m_currentPacketOrFrame.first.resize(m_payloadSize, 0);
     m_currentPacketOrFrame.second = secsToNextFrame;
@@ -338,7 +338,7 @@ double TraceBasedCodec::getCurrentBpp() const {
     double targetPixelsPerFrame;
     getBppData(scalingFactor, targetPixelsPerFrame);
 
-    return static_cast<double>(m_matchedRate) / (targetPixelsPerFrame * m_fps) * scalingFactor;
+    return double(m_matchedRate) / (targetPixelsPerFrame * m_fps) * scalingFactor;
 }
 
 void TraceBasedCodec::printResolutionAndBitrate() const {
@@ -352,7 +352,7 @@ void TraceBasedCodec::matchBitrate() {
     // Find greatest rate less than the target rate
     // Both stored and target bitrates are in bps
     for (it = currentMap.rbegin();
-         it != currentMap.rend() && static_cast<float>(it->first) > m_targetRate;
+         it != currentMap.rend() && float(it->first) > m_targetRate;
          ++it) {
     }
     m_matchedRate = (it != currentMap.rend() ? it->first : currentMap.begin()->first);
@@ -414,13 +414,13 @@ void TraceBasedCodecWithScaling::nextPacketOrFrame() {
     if (m_lowRate == 0 ) {
         assert(m_targetRate < m_highRate);
         //Linear scaling
-        const double scalingFactor = m_targetRate / static_cast<double>(m_highRate);
+        const double scalingFactor = m_targetRate / double(m_highRate);
         // We set the minimum to 1 byte, since scalingFactor can be arbitrarily close to 0
-        frameBytes = std::max(1UL, (unsigned long)(scalingFactor * (double)getFrameBytes(m_highRate)));
+        frameBytes = std::max<unsigned long>(1, scalingFactor * double(getFrameBytes(m_highRate)));
     } else if (m_highRate == 0) {
         assert(m_lowRate <= m_targetRate);
         //Linear scaling
-        const double scalingFactor = m_targetRate / static_cast<double>(m_lowRate);
+        const double scalingFactor = m_targetRate / double(m_lowRate);
         frameBytes = scalingFactor * getFrameBytes(m_lowRate);
     } else { // both low rate and high rate are valid
         assert(m_lowRate <= m_targetRate);
@@ -462,7 +462,7 @@ double TraceBasedCodecWithScaling::getCurrentBpp() const {
     double targetPixelsPerFrame;
     getBppData(scalingFactor, targetPixelsPerFrame);
 
-    return static_cast<double>(m_targetRate) / (targetPixelsPerFrame * m_fps) * scalingFactor;
+    return double(m_targetRate) / (targetPixelsPerFrame * m_fps) * scalingFactor;
 }
 
 void TraceBasedCodecWithScaling::printResolutionAndBitrate() const {
@@ -480,7 +480,7 @@ void TraceBasedCodecWithScaling::matchBitrate() {
     m_lowRate = 0;
     BitrateMap::const_iterator it;
     for (it = currentMap.begin();
-         it != currentMap.end() && static_cast<float>(it->first) <= m_targetRate;
+         it != currentMap.end() && float(it->first) <= m_targetRate;
          ++it) {
         m_lowRate = it->first;
     }
@@ -496,7 +496,7 @@ ShapedPacketizer::ShapedPacketizer(Codec* innerCodec,
     m_overhead(perPacketOverhead),
     m_bytesToSend(0, 0),
     m_secsToNextFrame(0.),
-    m_lastOverheadFactor((double)perPacketOverhead / (double)payloadSize) {
+    m_lastOverheadFactor(double(perPacketOverhead) / double(payloadSize)) {
 
     assert(innerCodec != NULL);
     nextPacketOrFrame(); //Read first frame
@@ -506,7 +506,7 @@ ShapedPacketizer::ShapedPacketizer(Codec* innerCodec,
 ShapedPacketizer::~ShapedPacketizer() {}
 
 bool ShapedPacketizer::isValid() const {
-    return Codec::isValid() && (bool)m_innerCodec.get();
+    return Codec::isValid() && bool(m_innerCodec.get());
 }
 
 void ShapedPacketizer::nextPacketOrFrame() {
@@ -520,17 +520,17 @@ void ShapedPacketizer::nextPacketOrFrame() {
         m_secsToNextFrame += codec->second;
 
         const double packetsToSend =
-            std::ceil((double)m_bytesToSend.size() / (double)(m_payloadSize));
+            std::ceil(double(m_bytesToSend.size()) / double(m_payloadSize));
         assert(m_bytesToSend.size() > 0);
-        m_lastOverheadFactor = (double)m_overhead * packetsToSend / (double)m_bytesToSend.size();
+        m_lastOverheadFactor = double(m_overhead) * packetsToSend / double(m_bytesToSend.size());
     }
 
     assert(m_bytesToSend.size() > 0);
     assert(m_secsToNextFrame >= 0);
 
     // m_payloadSize is interpreted here as "max payload size"
-    const unsigned long payloadSize = std::min<long unsigned int>(m_payloadSize, m_bytesToSend.size());
-    const double packetsToSend = std::ceil((double)m_bytesToSend.size() / (double)(m_payloadSize));
+    const unsigned long payloadSize = std::min<unsigned long>(m_payloadSize, m_bytesToSend.size());
+    const double packetsToSend = std::ceil(double(m_bytesToSend.size()) / double(m_payloadSize));
     assert(packetsToSend >= 1.);
     const double secsToNextPacket = m_secsToNextFrame / packetsToSend;
 
@@ -611,8 +611,8 @@ void StatisticsCodec::nextPacketOrFrame() {
         if (m_remainingBurstFrames == m_transientLength) { // I frame
             frameBytes *= m_iFrameRatio;
         } else {
-            float newRatio = ((float)m_transientLength) - m_iFrameRatio;
-            newRatio /= ((float)(m_transientLength - 1));
+            float newRatio = float(m_transientLength) - m_iFrameRatio;
+            newRatio /= float(m_transientLength - 1);
             newRatio = std::max(.2f, newRatio);
             frameBytes *= newRatio;
         }
@@ -662,7 +662,7 @@ void SimpleContentSharingCodec::nextPacketOrFrame() {
     float frameBytes = m_targetRate / (m_fps * 8.f);
 
     // Cap bytes to maximum small packet size
-    frameBytes = std::min(frameBytes, (float)m_noChangeMaxSize);
+    frameBytes = std::min<float>(frameBytes, m_noChangeMaxSize);
 
     // Time for a big frame?
     if (m_first || uniform(0., 1.) < m_bigFrameProb) {
