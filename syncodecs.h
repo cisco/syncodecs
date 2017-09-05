@@ -205,54 +205,55 @@ protected:
 /**
  * This abstract class is the superclass of all codecs that use the notion of frames per second.
  *
- * Typically, codecs that inherit from this class will return a constant number of seconds to wait
- * for next frame, as long as the value of member #m_fps does not change.
+ * Typically, codecs that inherit from this class will return a number of seconds to wait
+ * for next frame, based on the reference frame rate stored in #m_fps .
+ *
+ * Additionally, this class contains a number of protected members that generate some random
+ * numbers/distributions. These can be used as noise model for the size of frames, and
+ * frame intervals.
+ *
  */
 class CodecWithFps : virtual public Codec {
 public:
+    typedef double (*AddNoiseFunc)(double); /**< Typedef used for noise modeling callbacks. */
     /**
      * Class constructor.
      *
      * @param [in] fps The number of frames per second at which the codec is to operate.
+     * @param [in] addFrSizeNoise Callback implementation modeling the noise of frame sizes
+     *                            that can be provided to override the default implementation
+     *                            based on a laplacian distribution. If set to NULL, no noise
+     *                            model is applied.
+     * @param [in] addFrInterNoise Callback implementation modeling the noise of frame intervals
+     *                             that can be provided to override the default implementation
+     *                             based on a laplacian distribution. If set to NULL, no noise
+     *                             model is applied.
      */
-    CodecWithFps(double fps);
+    CodecWithFps(double fps,
+                 AddNoiseFunc addFrSizeNoise,
+                 AddNoiseFunc addFrInterNoise);
 
     /** Class destructor. Called after the subclasses' destructor is called */
     virtual ~CodecWithFps();
 
 protected:
-    float m_fps; /**< Current value of the number of frames per second (fps). */
-};
-
-/**
- * This abstract class is the superclass of all fps-based Codecs that have some randomness in their
- * calculations.
- *
- * Typically, codecs that inherit from this class can use this class's protected members that
- * generate some random numbers/distributions.
- */
-class CodecWithFpsAndRandomness : public CodecWithFps {
-public:
-    /**
-     * Class constructor.
-     *
-     * @param [in] fps The number of frames per second at which the codec is to operate.
-     */
-    CodecWithFpsAndRandomness(double fps);
-
-    /** Class destructor. Called after the subclasses' destructor is called */
-    virtual ~CodecWithFpsAndRandomness();
-
-protected:
-    /** Default implementation of the noise function applied to frame sizes */
-    static float addNoiseDefault(float origSize);
+    /** Default laplacian-based implementation of the noise function applied to frame sizes */
+    static double addLaplaceSize(double);
+    /** Default laplacian-based implementation of the noise function applied to frame intervals */
+    static double addLaplaceInter(double);
     /** Returns a random number between low and high, following a uniform distribution */
     static double uniform(double low, double high);
-
     /**
-     * Defines the width of the uniform distribution used as default noise function callback.
+     * Returns a random number following a laplacian distribution (double exponential) with mean
+     * and scale parameters given by input parameters mu and b
      */
-    static const float m_randMaxRatio;
+    static double laplace(double mu, double b);
+
+    float m_fps; /**< Current value of the reference frame rate (in fps). */
+    AddNoiseFunc m_addFrSizeNoise; /**< Callback to add noise to frame sizes. Can be NULL. */
+    AddNoiseFunc m_addFrInterNoise; /**< Callback to add noise to frame intervals. Can be NULL. */
+private:
+    static double addLaplaceNoise(double value, double mu, double b);
 };
 
 /**
@@ -321,7 +322,12 @@ protected:
 
 /**
  * This simplistic codec implementation provides a sequence of frames delivered at a
- * constant interval (as long as member #m_fps does not change).
+ * particular interval. If parameter #addFrInterNoise is NULL, the interval is constant.
+ * Else, the codec adds some noise to the reference interval according to a the distribution
+ * function specified by #addFrInterNoise .
+ *
+ * Optionally, a further distribution function can be configured as the noise model for the
+ * frame sizes.
  *
  * When needed, the codec adapts the size of the frames to achieve the currently configured
  * target bitrate.
@@ -336,8 +342,12 @@ public:
      * Class constructor.
      *
      * @param [in] fps The number of frames per second at which the codec is to operate.
+     * @param [in] addFrSizeNoise Callback implementation modeling the noise of frame sizes.
+     * @param [in] addFrInterNoise Callback implementation modeling the noise of frame intervals.
      */
-    SimpleFpsBasedCodec(double fps = 25.);
+    SimpleFpsBasedCodec(double fps = 25.,
+                        AddNoiseFunc addFrSizeNoise = NULL,
+                        AddNoiseFunc addFrInterNoise = &addLaplaceInter);
 
     /** Class destructor. Called after the subclasses' destructor is called */
     virtual ~SimpleFpsBasedCodec();
@@ -356,14 +366,14 @@ protected:
  *
  * Upon initialization, the codec parses a group of video trace files and loads them in memory.
  * Each trace file contains information on the sequence of frames produced by a real codec.
- * Each line of the file corresponds to a frame register, where several fields can be
- * found (see #FrameDataIterator for further information on the format of the traces file).
+ * Each line of the file corresponds to a frame record, where several fields can be
+ * found (see #FrameDataIterator for further information on the format of the trace file).
  * This codec implementation only uses the "frame size" field (other fields such as frame type
  * or PSNR, included in the trace file, are not used by this codec's algorithm).
  *
  * The codec takes as parameter the path to a directory containing a number of trace files.
  * All trace files in that directory refer to the same raw video sequence, so all files should
- * contain the same number of frames records. Each file contains the traces resulting from encoding
+ * contain the same number of frame records. Each file contains the traces resulting from encoding
  * the whole raw video sequence with a fixed resolution and a fixed target bitrate. The names of
  * the trace files must follow the following format:
  *
@@ -392,7 +402,8 @@ protected:
  *       resolutions and a set of target bitrates.
  *
  * Once the codec is set up, and so the video traces have been loaded in memory, the codec
- * transitions to valid state (boolean cast will evaluate to true) and can henceforth be used.
+ * transitions to valid state (the codec object will evaluate to true if cast to boolean) and
+ * can henceforth be used.
  *
  * This codec's implementation mimics the operation of a real adaptive bitrate codec (ABR).
  * It contains two modes: fixed and variable resolution. For the sake of simplicity in
@@ -403,7 +414,7 @@ protected:
  * <ul>
  *   <li> They have the fixed resolution #m_fixedResIt. </li>
  *   <li> They have a target bitrate that is less than the codec's own target
- *        bitrate (i.e., #m_targetRate, which is set using #setTargetRate ). </li>
+ *        bitrate (i.e., #m_targetRate , which is set using #setTargetRate ). </li>
  * </ul>
  *
  * The codec then chooses the video trace with the highest bitrate among those found. It will use
@@ -434,10 +445,10 @@ protected:
  * the next frame, an algorithm based of the <i>bits per pixel</i> concept is used.
  * In a nutshell, the codec calculates how many bits of the encoded frame are needed on
  * average for each pixel in the raw frame. If the result is less than a low threshold,
- * #m_lowBppThresh , it means that too few bit are available on average to encode a pixel than the
- * resolution is increased to the next available (which contains video traces). Likewise, when
- * the bits available on average to encode a pixel are too many (above #m_highBppThresh ) the
- * resolution is decreased to the next one containing video traces.
+ * #m_lowBppThresh , it means that too few bits are available on average to encode a pixel and the
+ * resolution is decreased to the next available (i.e., the next for which the codec has video
+ * traces). Likewise, when the bits available on average to encode a pixel are too many
+ * (above #m_highBppThresh ) the resolution is increased to the next one containing video traces.
  *
  * The bits per pixel idea works well for resolutions smaller than 540p, for bigger resolutions the
  * codec uses the power of .75 rule, proposed by Ben Waggoner. This rule calculates the bits per
@@ -445,17 +456,17 @@ protected:
  * scaling factor: ( # of pixels in a resolution X frame / # of pixels in a 540p frame )^.75
  *
  * @note For an extensive description on the algorithm behind the trace-based codec,
- *       see IETF draft draft-zhu-rmcat-video-traffic-source.
+ *       see IETF draft draft-ietf-rmcat-video-traffic-model.
  * @note For further details on the bits per pixel concept and how one can use it in order
  *       to guide the choice of resolution for an encoded frame, see Jan L. Ozer's book
  *       on video compression (ISBN-13:978-0976259503).
  */
 class TraceBasedCodec : public CodecWithFps {
     typedef std::string ResLabel;
-    //Can't use a map because we want the keys ordered by their insertion
     typedef std::pair<unsigned int, /* height */
                       unsigned int  /* width */
                       > Resolution;
+    //Can't use a map because we want the keys ordered by their insertion
     typedef std::vector<std::pair<ResLabel, Resolution> > Labels2Res;
 
 public:
@@ -481,9 +492,10 @@ public:
     /**
      * Set the mode to fixed or variable resolution, depending on the input parameter.
      *
-     * If the mode set is fixed resolution, then the current resolution is changed to the one previously set
-     * with #setResolutionForFixedMode . If no fixed resolution was previously set, the middle resolution
-     * will be used. See #setResolutionForFixedMode for further details on the middle resolution.
+     * If the mode set is fixed resolution, then the current resolution is changed to the one
+     * previously set with #setResolutionForFixedMode . If no fixed resolution was previously set,
+     * the middle resolution will be used. See #setResolutionForFixedMode for further details on
+     * the middle resolution.
      *
      * If the mode set is variable resolution, then the current resolution is not changed, but from now
      * on it is free to evolve according to the resolution change algorithm used by the codec.
@@ -622,13 +634,13 @@ private:
  *
  * The #TraceBasedCodec uses the video trace data as is. It does not scale or interpolate it.
  * This class implements a scaling and interpolation algorithm that provides smoother results
- * on term of frame sizes when the target bitrate undergoes small variations. Note that, when
+ * in terms of frame sizes when the target bitrate undergoes small variations. Note that, when
  * the target bitrate variations are small, the #TraceBasedCodec tends to output <i>the same</i>
  * sequence of frame sizes.
  *
  * This is a short description of the scaling and interpolation algorithm. When the codec advances
- * to the next frame, the bitrate immediately below (same as #TraceBasedCodec ) and bitrate
- * immediately above the current target bitrate are looked up among the video traces of the
+ * to the next frame, the bitrate immediately below (same as #TraceBasedCodec ) and the bitrate
+ * immediately above the current target bitrate are looked up in the video traces of the
  * current resolution. There are three cases:
  * <ul>
  *   <li> The current target bitrate is neither less than the minimum bitrate nor greater
@@ -636,17 +648,17 @@ private:
  *        the resulting frame size is calculated by linear interpolation of the current frame
  *        sizes for the below and above video traces. </li>
  *   <li> The current target bitrate is less than the minimum bitrate of all video traces of the
- *        current resolution. In this case the the resulting frame size is calculated by
+ *        current resolution. In this case the resulting frame size is calculated by
  *        scaling the frame size for the below video trace, with respect to the current
  *        target bitrate. </li>
  *   <li> The current target bitrate is greater than the maximum bitrate of all video traces of
- *        the current resolution. In this case the the resulting frame size is calculated by
+ *        the current resolution. In this case the resulting frame size is calculated by
  *        scaling the frame size for the above video trace, with respect to the current
  *        target bitrate. </li>
  * </ul>
  *
  * @note For further details on the algorithm used for scaling and interpolating, please see
- *       IETF draft draft-zhu-rmcat-video-traffic-source.
+ *       IETF draft draft-ietf-rmcat-video-traffic-model.
  */
 
 class TraceBasedCodecWithScaling : public TraceBasedCodec {
@@ -782,8 +794,8 @@ private:
  * This synthetic codec mimics the operation of a real codec by implementing a statistical
  * model. This model has two phases: the steady phase and the transient phase.
  *
- * The codec is in the steady phase as long as the target rates changes are not substantial.
- * A change is substantial when the ratio new rate/old rate is greater
+ * The codec is in the steady phase as long as the changes in the target rate are not
+ * substantial. A change is substantial when the ratio new rate/old rate is greater
  * than  #m_bigChangeRatio (this threshold is configurable in the class's constructor).
  * While in steady state, the codec creates a sequence of frames, whose size is chosen
  * to fit the target rate given that the frames are sent at  #m_fps frames per second.
@@ -792,6 +804,9 @@ private:
  * The transient phase has fixed duration #m_transientLength expressed in frames. In the
  * transient phase, the first frame is an I-frame, and is modeled as a frame whose size
  * is #m_iFrameRatio times bigger than that of a frame in steady state. The size of the
+
+TODO
+
  * remaining frames in the transient phase are made smaller to compensate for the I-frame's
  * size, so that, at the end of the transient period the average bitrate still fits the
  * target rate. These remaining frames in the transient phase will never be smaller than
@@ -800,15 +815,21 @@ private:
  * target rate.
  *
  * Whether in steady state or transient state, the last step before delivering the frame
- * is to modify its size to simulate noise. This size is modified by a applying a
+ * is to modify its size to simulate noise. This size is modified by applying a
  * function to the frame size that (slightly) modifies it. The function to apply is stored
- * as a callback in #m_addNoise , which can be set in via the constructor of the class to any
- * callback function that the user may provide. If the user does not provide a function
- * the default callback, #addNoiseDefault , is used. The default callback modifies the size
- * of each frame by enlarging/shrinking it up to a ratio of #RAND_UNIFORM_MAX_RATIO . The
- * exact amount of enlarging/shrinking is given by random uniform distribution. As mentioned
- * above, to model the noise in frame size the user can provide a different implementation
- * as a callback in the constructor.
+ * as a callback in #m_addFrSizeNoise , which can be set in via the constructor of the class
+ * to any callback function that the user may provide. If the user does not provide a function
+ * the default callback, #addLaplaceSize , is used. The default callback modifies the size
+ * of each frame by enlarging/shrinking according to a laplacian random distribution.
+ * As mentioned above, to model the noise in frame size the user can provide a different
+ * implementation as a callback in the constructor.
+ *
+ * There is another callback provided to add noise to the the (otherwise constant) 
+ * frame interval configured. The default callback also implements a laplacian random
+ * distribution.
+ *
+ * Both default noise models have been chosen according to observations made during our study
+ * of the behavior of Firefox's h264 codec implementation.
  *
  * There is a limit to how much the current target rate can be changed in one shot: the
  * ratio between the old and the new value for the target rate cannot be bigger
@@ -819,19 +840,17 @@ private:
  *
  * Finally, when the user updates the target rate, the codec will refuse any further update
  * for the next #m_updateInterval seconds.
+ *
+ * @note For further details on this algorithm and the default noise functions, please see
+ *       IETF draft draft-ietf-rmcat-video-traffic-model.
  */
 
-class StatisticsCodec : public CodecWithFpsAndRandomness {
+class StatisticsCodec : public CodecWithFps {
 public:
-    typedef float (*AddNoiseFunc)(float); /**< Typedef of the callback for modeling noise. */
-
     /**
      * Class constructor.
      *
      * @param [in] fps The number of frames per second at which the codec is to operate.
-     * @param [in] addNoise Callback implementation modeling the noise frame sizes that can be
-     *                      provided to override the default implementation based on a
-     *                      uniform distribution.
      * @param [in] maxUpdateRatio The limit in the target rate update in one shot, expressed
      *                            in terms of ratio old/new target rate. 0 to disable this limit.
      * @param [in] updateInterval The interval in seconds that needs to elapse after a successful
@@ -842,14 +861,17 @@ public:
      * @param [in] transientLength Length of the transient phase in frames.
      * @param [in] iFrameRatio Average size of an I-frame in terms of ratio to a normal frame
      *                         (P-frame) produced while in steady state.
+     * @param [in] addFrSizeNoise Callback implementation modeling the noise of frame sizes.
+     * @param [in] addFrInterNoise Callback implementation modeling the noise of frame intervals.
      */
     StatisticsCodec(double fps,
-                    AddNoiseFunc addNoise = &addNoiseDefault,
                     float maxUpdateRatio = .1, // 10%
                     double updateInterval = .1, // 100 ms
                     float bigChangeRatio = .5, // 50%
                     unsigned int transientLength = 10, // frames
-                    float iFrameRatio = 4.);
+                    float iFrameRatio = 4.,
+                    AddNoiseFunc addFrSizeNoise = &addLaplaceSize,
+                    AddNoiseFunc addFrInterNoise = &addLaplaceInter);
 
     /** Class destructor. Called after the subclasses' destructor is called */
     virtual ~StatisticsCodec();
@@ -886,9 +908,6 @@ protected:
     float m_iFrameRatio; /**< Ratio of I-frame to normal frame (i.e., P-frame in steady phase). */
     double m_timeToUpdate; /**< Time remaining until next target rate update will be accepted. */
     unsigned int m_remainingBurstFrames; /** # of frames left in current transient phase. */
-
-private:
-    AddNoiseFunc m_addNoise;
 };
 
 /**
@@ -913,7 +932,7 @@ private:
  * is applied to the initial size <i>s_0</i>.
  */
 
-class SimpleContentSharingCodec : public CodecWithFpsAndRandomness {
+class SimpleContentSharingCodec : public CodecWithFps {
 public:
     /**
      * Class constructor.

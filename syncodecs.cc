@@ -35,7 +35,8 @@
 
 #define INITIAL_RATE 100.  // Initial (very low) target rate set by default in codecs
 #define EPSILON 1e-10  // Used to check floats/doubles for zero
-#define RAND_UNIFORM_MAX_RATIO .10  // Width of random variation (noise) in frame size (=10%)
+#define SCALE_T .15 // Reference scaling for frame interval noise (zero-mean laplacian distribution)
+#define SCALE_B .15 // Reference scaling for frame size (zero-mean laplacian distribution)
 
 namespace syncodecs {
 
@@ -81,30 +82,39 @@ bool Codec::isValid() const {
 
 
 
-CodecWithFps::CodecWithFps(double fps) : Codec(), m_fps(fps) {
+CodecWithFps::CodecWithFps(double fps, AddNoiseFunc addFrSizeNoise, AddNoiseFunc addFrInterNoise) :
+        Codec(),
+        m_fps(fps),
+        m_addFrSizeNoise(addFrSizeNoise),
+        m_addFrInterNoise(addFrInterNoise) {
     assert(fps > 0);
 }
 
 CodecWithFps::~CodecWithFps() {}
 
-
-
-const float CodecWithFpsAndRandomness::m_randMaxRatio = RAND_UNIFORM_MAX_RATIO;
-
-CodecWithFpsAndRandomness::CodecWithFpsAndRandomness(double fps) : CodecWithFps(fps) {
+double CodecWithFps::addLaplaceNoise(double value, double mu, double b) {
+    value += value * laplace(mu, b);
+    return value;
 }
 
-CodecWithFpsAndRandomness::~CodecWithFpsAndRandomness() {}
-
-float CodecWithFpsAndRandomness::addNoiseDefault(float size) {
-    size += size * uniform(-m_randMaxRatio, m_randMaxRatio);
-    return size;
+double CodecWithFps::addLaplaceSize(double size) {
+    return std::max(1., addLaplaceNoise(size, 0, SCALE_B)); // At least 1 byte to send
 }
 
-double CodecWithFpsAndRandomness::uniform(double min, double max) {
-    return ((double)rand() / (double)RAND_MAX) * (max - min) + min;
+double CodecWithFps::addLaplaceInter(double seconds) {
+    return std::max(0., addLaplaceNoise(seconds, 0, SCALE_T)); // Non-negative time
 }
 
+double CodecWithFps::uniform(double min, double max) {
+    return double(rand()) / double(RAND_MAX) * (max - min) + min;
+}
+
+double CodecWithFps::laplace(double mu, double b) {
+    assert(b > 0.);
+    const double u = uniform(-.5, .5);
+    const int sign = int(0 < u) - int(u < 0);
+    return mu - b * sign * log(1 - 2 * abs(u));
+}
 
 
 Packetizer::Packetizer(unsigned long payloadSize) :
@@ -136,8 +146,10 @@ void PerfectCodec::nextPacketOrFrame() {
 
 
 
-SimpleFpsBasedCodec::SimpleFpsBasedCodec(double fps) :
-    CodecWithFps(fps) {
+SimpleFpsBasedCodec::SimpleFpsBasedCodec(double fps,
+                                         AddNoiseFunc addFrSizeNoise,
+                                         AddNoiseFunc addFrInterNoise) :
+    CodecWithFps(fps, addFrSizeNoise, addFrInterNoise) {
     nextPacketOrFrame(); //Read first frame
     assert(isValid());
 }
@@ -145,10 +157,19 @@ SimpleFpsBasedCodec::SimpleFpsBasedCodec(double fps) :
 SimpleFpsBasedCodec::~SimpleFpsBasedCodec() {}
 
 void SimpleFpsBasedCodec::nextPacketOrFrame() {
-    const unsigned long frameBytes = std::ceil(m_targetRate / (m_fps * 8.));
+    unsigned long frameBytes = std::ceil(m_targetRate / (m_fps * 8.));
+    // Apply the configured noise function to frame size
+    if (m_addFrSizeNoise != NULL) {
+        frameBytes = m_addFrSizeNoise(frameBytes);
+    }
     assert(frameBytes > 0);
 
-    const double secsToNextFrame = 1. / m_fps;
+    double secsToNextFrame = 1. / m_fps;
+    // Apply the configured noise function to frame interval
+    if (m_addFrInterNoise != NULL) {
+        secsToNextFrame = m_addFrInterNoise(secsToNextFrame);
+    }
+    assert(secsToNextFrame >= 0.);
 
     m_currentPacketOrFrame.first.resize(frameBytes, 0);
     m_currentPacketOrFrame.second = secsToNextFrame;
@@ -165,7 +186,7 @@ TraceBasedCodec::TraceBasedCodec(const std::string& path,
                                  const std::string& filePrefix,
                                  double fps,
                                  bool fixed) :
-    CodecWithFps(fps), m_fixedModeEnabled(fixed), m_currentFrameIdx(0) {
+    CodecWithFps(fps, NULL, NULL), m_fixedModeEnabled(fixed), m_currentFrameIdx(0) {
     static class FillResolutions_ {
         void addLabelAndResolution(const ResLabel& label, const Resolution reso) {
             m_labels2Res.push_back(std::make_pair(label, reso));
@@ -550,23 +571,23 @@ void ShapedPacketizer::nextPacketOrFrame() {
 
 
 StatisticsCodec::StatisticsCodec(double fps,
-                                 AddNoiseFunc addNoise,
                                  float maxUpdateRatio,
                                  double updateInterval,
                                  float bigChangeRatio,
                                  unsigned int transientLength,
-                                 float iFrameRatio) :
-        CodecWithFpsAndRandomness(fps), m_maxUpdateRatio(maxUpdateRatio),
+                                 float iFrameRatio,
+                                 AddNoiseFunc addFrSizeNoise,
+                                 AddNoiseFunc addFrInterNoise) :
+        CodecWithFps(fps, addFrSizeNoise, addFrInterNoise),
+        m_maxUpdateRatio(maxUpdateRatio),
         m_updateInterval(updateInterval),
         m_bigChangeRatio(bigChangeRatio), m_transientLength(transientLength),
         m_iFrameRatio(iFrameRatio), m_timeToUpdate(0.),
-        m_remainingBurstFrames (transientLength), // Start with a burst
-        m_addNoise(addNoise) {
+        m_remainingBurstFrames (transientLength) { // Start with a burst
     assert(m_maxUpdateRatio > -EPSILON); // >= 0
     assert(m_updateInterval > -EPSILON); // >= 0
     assert(m_bigChangeRatio > EPSILON); // > 0
     assert(m_iFrameRatio > EPSILON); // > 0
-    assert(m_addNoise != NULL);
     nextPacketOrFrame(); //Read first frame
     assert(isValid());
 }
@@ -619,12 +640,18 @@ void StatisticsCodec::nextPacketOrFrame() {
         --m_remainingBurstFrames;
     }
 
-    // Apply the configured function for noise
-    frameBytes = m_addNoise(frameBytes);
-    // Should have at least 1 byte to send
-    frameBytes = std::max(1.f, frameBytes);
+    // Apply the configured noise function to frame size
+    if (m_addFrSizeNoise != NULL) {
+        frameBytes = m_addFrSizeNoise(frameBytes);
+    }
+    assert(frameBytes > 0);
 
-    const double secsToNextFrame = 1. / m_fps;
+    double secsToNextFrame = 1. / m_fps;
+    // Apply the configured noise function to frame interval
+    if (m_addFrInterNoise != NULL) {
+        secsToNextFrame = m_addFrInterNoise(secsToNextFrame);
+    }
+    assert(secsToNextFrame >= 0.);
 
     m_currentPacketOrFrame.first.resize((size_t)frameBytes, 0);
     m_currentPacketOrFrame.second = secsToNextFrame;
@@ -641,7 +668,7 @@ SimpleContentSharingCodec::SimpleContentSharingCodec(double fps,
                                  float bigFrameProb,
                                  float bigFrameRatioMin,
                                  float bigFrameRatioMax) :
-        CodecWithFpsAndRandomness(fps),
+        CodecWithFps(fps, NULL, NULL),
         m_noChangeMaxSize(noChangeMaxSize),
         m_bigFrameProb(bigFrameProb),
         m_bigFrameRatioMin(bigFrameRatioMin),
