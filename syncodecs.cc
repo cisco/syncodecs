@@ -33,7 +33,7 @@
 #include <algorithm>
 #include <sys/stat.h>
 
-#define INITIAL_RATE 100.  // Initial (very low) target rate set by default in codecs
+#define INITIAL_RATE 100.  // Initial (very low) target rate set by default in codecs, in bps
 #define EPSILON 1e-10  // Used to check floats/doubles for zero
 #define SCALE_T .15 // Reference scaling for frame interval noise (zero-mean laplacian distribution)
 #define SCALE_B .15 // Reference scaling for frame size (zero-mean laplacian distribution)
@@ -423,7 +423,9 @@ TraceBasedCodecWithScaling::TraceBasedCodecWithScaling(const std::string& path,
                                                        const std::string& filePrefix,
                                                        double fps,
                                                        bool fixed) :
-    TraceBasedCodec(path, filePrefix, fps, fixed), m_lowRate(0), m_highRate(0) {}
+    CodecWithFps(fps, NULL, NULL),
+    TraceBasedCodec(path, filePrefix, fps, fixed),
+    m_lowRate(0), m_highRate(0) {}
 
 TraceBasedCodecWithScaling::~TraceBasedCodecWithScaling() {}
 
@@ -592,6 +594,7 @@ StatisticsCodec::StatisticsCodec(double fps,
     assert(m_maxUpdateRatio > -EPSILON); // >= 0
     assert(m_updateInterval > -EPSILON); // >= 0
     assert(m_bigChangeRatio > EPSILON); // > 0
+    assert(m_transientLength > 1);
     assert(m_iFrameSize > 0);
     nextPacketOrFrame(); //Read first frame
     assert(isValid());
@@ -712,5 +715,40 @@ void SimpleContentSharingCodec::nextPacketOrFrame() {
     m_currentPacketOrFrame.second = secsToNextFrame;
 }
 
+
+
+HybridCodec::HybridCodec(const std::string& path,
+                         const std::string& filePrefix,
+                         double fps,
+                         bool fixed,
+                         float maxUpdateRatio,
+                         double updateInterval,
+                         float bigChangeRatio,
+                         unsigned int transientLength,
+                         unsigned long iFrameSize,
+                         AddNoiseFunc addFrSizeNoise,
+                         AddNoiseFunc addFrInterNoise) :
+        CodecWithFps(fps, addFrSizeNoise, addFrInterNoise),
+        StatisticsCodec(0 /*fps*/, maxUpdateRatio, updateInterval, bigChangeRatio, transientLength,
+                        iFrameSize, NULL/*addFrSizeNoise*/, NULL/*addFrInterNoise*/),
+        TraceBasedCodecWithScaling(path, filePrefix, fps/*0*/, fixed) {}
+
+HybridCodec::~HybridCodec() {}
+
+void HybridCodec::nextPacketOrFrame() {
+    if (m_remainingBurstFrames > 0) { // Transient phase: adopt statistics-based behavior
+        StatisticsCodec::nextPacketOrFrame();
+        ++m_currentFrameIdx; // Advance frame index in trace-based codec
+    } else { // Steady phase: adopt trace-based behavior
+        TraceBasedCodecWithScaling::nextPacketOrFrame();
+        // Apply the configured noise function to frame interval
+        if (m_addFrInterNoise != NULL) {
+            m_currentPacketOrFrame.second = m_addFrInterNoise(m_currentPacketOrFrame.second);
+        }
+        assert(m_currentPacketOrFrame.second >= 0.);
+        // Update remaining time before a further target rate update is accepted
+        m_timeToUpdate = std::max(0., m_timeToUpdate - m_currentPacketOrFrame.second);
+    }
+}
 
 }

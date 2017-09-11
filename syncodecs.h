@@ -461,7 +461,7 @@ protected:
  *       to guide the choice of resolution for an encoded frame, see Jan L. Ozer's book
  *       on video compression (ISBN-13:978-0976259503).
  */
-class TraceBasedCodec : public CodecWithFps {
+class TraceBasedCodec : virtual public CodecWithFps {
     typedef std::string ResLabel;
     typedef std::pair<unsigned int, /* height */
                       unsigned int  /* width */
@@ -671,8 +671,8 @@ public:
      * @param [in] filePrefix The common prefix that all video trace files must have.
      * @param [in] fps The number of frames per second at which the codec is to operate.
      * @param [in] fixed Boolean denoting whether the codec should start in fixed or variable
-     *             resolution mode. If false, the codec starts in variable resolution; if true the
-     *             codec starts in fixed resolution mode.
+     *                   resolution mode. If false, the codec starts in variable resolution;
+     *                   if true the codec starts in fixed resolution mode.
      */
     TraceBasedCodecWithScaling(const std::string& path,
                                const std::string& filePrefix,
@@ -823,9 +823,8 @@ private:
  * As mentioned above, to model the noise in frame size the user can provide a different
  * implementation as a callback in the constructor.
  *
- * There is another callback provided to add noise to the the (otherwise constant) 
- * frame interval configured. The default callback also implements a laplacian random
- * distribution.
+ * There is another callback provided to add noise to the (otherwise constant) frame interval
+ * configured. The default callback also implements a laplacian random distribution.
  *
  * Both default noise models have been chosen according to observations made during our study
  * of the behavior of Firefox's h264 codec implementation.
@@ -844,7 +843,7 @@ private:
  *       IETF draft draft-ietf-rmcat-video-traffic-model.
  */
 
-class StatisticsCodec : public CodecWithFps {
+class StatisticsCodec : virtual public CodecWithFps {
 public:
     /**
      * Class constructor.
@@ -965,6 +964,81 @@ protected:
     float m_first; /**< Denotes whether the current frame is the first in the sequence. */
 };
 
+/**
+ * This synthetic codec combines the behavior of its two parent classes: the statistics
+ * codec (#StatisticsCodec ) and the trace based codec with scaling and interpolation
+ * (#TraceBasedCodecWithScaling ). It is an attempt to get "the best of both worlds".
+ *
+ * The codec reuses the two phases defined in the statistics codec: the steady phase and
+ * the transient phase. The way the codec transitions from the steady to the transient
+ * phase matches the statistics codec: the transition occurs when the target rate undergoes
+ * a substantial change. A rate change is substantial when the ratio new rate/old rate is
+ * greater than #m_bigChangeRatio . The length of the transient phase is also taken from the
+ * statistics codec: the transient phase has fixed duration #m_transientLength expressed in
+ * frames.
+ *
+ * When in the steady phase, the codec behaves according to its trace based parent class,
+ * providing frame sizes according to the traces loaded in memory when the codec's C++
+ * object was instantiated. In the transient phase, the codec sends a big (I-)frame followed
+ * by smaller frames, just as the statistics codec does. The sizes of all frames in the
+ * transient phase are modified by the noise function #m_addFrSizeNoise ; just like the
+ * statistics codec.
+ *
+ * Whether in steady or transient phase, the codec will apply the noise function
+ * #m_addFrInterNoise (if not NULL) to the frame interval of all frames. Also in both
+ * phases, the time damped response to rate changes (defined by the statistics codec)
+ * is also applied: after accepting a target rate update, the codec will refuse any further
+ * updates for the next #m_updateInterval seconds.
+ *
+ * @note For further details on how this codec combines the statistics and trace based
+ *       algorithms, please see IETF draft draft-ietf-rmcat-video-traffic-model.
+ */
+class HybridCodec : public StatisticsCodec, public TraceBasedCodecWithScaling {
+public:
+    /**
+     * Class constructor.
+     *
+     * @param [in] path The path to the directory where the files containing video traces are
+     *                  located.
+     * @param [in] filePrefix The common prefix that all video trace files must have.
+     * @param [in] fps The number of frames per second at which the codec is to operate.
+     * @param [in] fixed Boolean denoting whether the codec should start in fixed or variable
+     *                   resolution mode. If false, the codec starts in variable resolution;
+     *                   if true the codec starts in fixed resolution mode.
+     * @param [in] maxUpdateRatio The limit in the target rate update in one shot, expressed
+     *                            in terms of ratio old/new target rate. 0 to disable this limit.
+     * @param [in] updateInterval The interval in seconds that needs to elapse after a successful
+     *                            target rate update before the codec accepts again a new update
+     *                            to the target rate.
+     * @param [in] bigChangeRatio The threshold to consider a target rate update as substantial,
+     *                            thereby triggering a new transient phase.
+     * @param [in] transientLength Length of the transient phase in frames.
+     * @param [in] iFrameSize Reference size of an I-frame in bytes.
+     * @param [in] addFrSizeNoise Callback implementation modeling the noise of frame sizes.
+     * @param [in] addFrInterNoise Callback implementation modeling the noise of frame intervals.
+     */
+
+    HybridCodec(const std::string& path,
+                const std::string& filePrefix,
+                double fps,
+                bool fixed = false,
+                float maxUpdateRatio = .05, // 10%
+                double updateInterval = .05, // 50 ms
+                float bigChangeRatio = .1, // 10%
+                unsigned int transientLength = 10, // frames
+                unsigned long iFrameSize = 4.17 * 1024, // bytes
+                AddNoiseFunc addFrSizeNoise = &addLaplaceSize,
+                AddNoiseFunc addFrInterNoise = &addLaplaceInter);
+
+    /** Class destructor. Called after the subclasses' destructor is called */
+    virtual ~HybridCodec();
+
+protected:
+    /** Internal implementation of the hybrid codec. */
+    virtual void nextPacketOrFrame();
+};
+
+
 } /* namespace syncodecs */
 
 /**
@@ -1037,7 +1111,7 @@ protected:
  *     std::cout << std::endl << std::endl;
  *     std::cout << "  Simple content sharing codec (wrapped in the shaped packetizer). "
  *               << slow4 << "x slower:" << std::endl;
- *     syncodecs::Codec* inner4 = new syncodecs::SimpleContentSharingCodec();
+ *     syncodecs::Codec* inner4 = new syncodecs::SimpleContentSharingCodec(5., 800);
  *     std::auto_ptr<syncodecs::Codec> codec4(new syncodecs::ShapedPacketizer(inner4, MAX_PKT_SIZE));
  *     playCodec(*codec4, 50, 500, slow4);
  *
@@ -1048,10 +1122,10 @@ protected:
  *
  * EXAMPLE 2.
  *
- * In the second example, we demonstrate how one can simulate two different codecs, running
+ * In the second example, we demonstrate how one can simulate three different codecs, running
  * concurrently, with only one simulation thread. In this example we have chosen to use
- * a more advanced codec setup, in order to demonstrate the usage of the trace-based and the
- * statistics codecs and the shaped packetizer.
+ * a more advanced codec setup, in order to demonstrate the usage of the trace-based, the
+ * statistics, and the hybrid codecs.
  * Sample code:
  * @code
  * #include "syncodecs.h"
@@ -1059,54 +1133,60 @@ protected:
  * #include <cassert>
  * #include <iostream>
  * #include <iomanip>
+ * #include <algorithm>
+ * #include <iterator>
  *
  * #define MAX_PKT_SIZE 1000 // bytes
+ * #define AUTOPTR(x) std::auto_ptr<syncodecs::Codec>((x))
+ * #define TRACES_DIR_PATH "video_traces/chat_firefox_h264"
+ * #define TRACES_FILE_PREFIX "chat"
  *
- * void setRate(syncodecs::Codec& c, unsigned int codecN, unsigned int rate) {
+ * static void setRate(syncodecs::Codec& c, unsigned int codecN, unsigned int rate) {
  *     std::cout << "  Setting codec " << codecN << "'s target rate to "
  *               << rate << " Kbps";
  *     float result = c.setTargetRate(rate * 1024);
- *     std::cout << ". Accepted rate " << result / 1024 << "Kbps" << std::endl;
+ *     std::cout << ". Accepted rate " << result / 1024 << " Kbps" << std::endl;
  * }
  *
- * void processEarliestFrame(double& now, std::string name,
- *                           syncodecs::Codec& c, double& time, unsigned int& nFrame) {
+ * static void processEarliestFrame(double& now, int idx, syncodecs::Codec& c,
+ *                                  double& time, unsigned int& nFrame) {
  *     assert(now <= time);
  *     now += (time - now);
  *     time += c->second;
- *     std::cout << "    Time " << int(now * 1000.) << " ms: " << name << "'s frame #" << nFrame
- *               << ", size: " << c->first.size() << ", next frame due @ "
- *               << int(time * 1000.) << " ms" << std::endl;
+ *     std::cout << "    Time " << int(now * 1000.) << " ms: codec " << idx
+ *               << "'s frame #" << nFrame << ", size: " << c->first.size()
+ *               << ", next frame due @ " << int(time * 1000.) << " ms" << std::endl;
  *     ++c;
  *     ++nFrame;
  * }
  *
  * int main(int argc, char** argv) {
- *     syncodecs::Codec* inner1 = new syncodecs::TraceBasedCodecWithScaling(
- *                                "/my/cool/path/to/traces/directory", "myAwesomeVideo", 25.);
- *     std::auto_ptr<syncodecs::Codec> codec1(new syncodecs::ShapedPacketizer(inner1, MAX_PKT_SIZE));
- *     syncodecs::Codec* inner2 = new syncodecs::StatisticsCodec(30.);
- *     std::auto_ptr<syncodecs::Codec> codec2(new syncodecs::ShapedPacketizer(inner2, MAX_PKT_SIZE));
+ *     syncodecs::Codec* inner0 = new syncodecs::TraceBasedCodecWithScaling(
+ *                                     TRACES_DIR_PATH, TRACES_FILE_PREFIX, 25.);
+ *     syncodecs::Codec* inner1 = new syncodecs::StatisticsCodec(25.);
+ *     syncodecs::Codec* inner2 = new syncodecs::HybridCodec(
+ *                                     TRACES_DIR_PATH, TRACES_FILE_PREFIX, 25.);
+ *     std::auto_ptr<syncodecs::Codec> codecs[] = { AUTOPTR(inner0),
+ *                                                  AUTOPTR(inner1),
+ *                                                  AUTOPTR(inner2)
+ *                                                };
+ *     static const int n = sizeof(codecs) / sizeof(codecs[0]);
+ *     double times[n] = {};
+ *     unsigned int nFrames[n] = {};
  *     double now = 0.;
- *     double time1 = 0.;
- *     double time2 = 0.;
- *     unsigned int nFrame1 = 0;
- *     unsigned int nFrame2 = 0;
  *
- *     std::cout << "Simulating two codecs running in parallel with one single thread" << std::endl;
+ *     std::cout << "Simulating " << n << " codecs running in parallel "
+ *               << "with one single thread" << std::endl;
  *
- *     for (int i = 0; i < 200; ++i) {
+ *     for (int i = 0; i < 1000; ++i) {
  *         if (i % 10 == 0) {
  *             const unsigned int newRate = 500 + 10 * (i / 10);
- *             setRate(*codec1, 1, newRate);
- *             setRate(*codec2, 2, newRate);
+ *             for (int j = 0; j < n; ++j) {
+ *                 setRate(*(codecs[j]), j, newRate);
+ *             }
  *         }
- *
- *         if (time1 <= time2) {
- *             processEarliestFrame(now, "codec 1", *codec1, time1, nFrame1);
- *         } else {
- *             processEarliestFrame(now, "codec 2", *codec2, time2, nFrame2);
- *         }
+ *         int j = std::distance(&times[0], std::min_element(&times[0], &times[n]));
+ *         processEarliestFrame(now, j, *(codecs[j]), times[j], nFrames[j]);
  *     }
  *
  *     return 0;
