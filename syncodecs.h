@@ -483,7 +483,7 @@ public:
      */
     TraceBasedCodec(const std::string& path,
                     const std::string& filePrefix,
-                    double fps = 25.,
+                    double fps,
                     bool fixed = false);
 
     /** Class destructor. Called after the subclasses' destructor is called */
@@ -676,7 +676,7 @@ public:
      */
     TraceBasedCodecWithScaling(const std::string& path,
                                const std::string& filePrefix,
-                               double fps = 25.,
+                               double fps,
                                bool fixed = false);
 
     /** Class destructor. Called after the subclasses' destructor is called */

@@ -113,7 +113,7 @@ double CodecWithFps::laplace(double mu, double b) {
     assert(b > 0.);
     const double u = uniform(-.5, .5);
     const int sign = int(0 < u) - int(u < 0);
-    return mu - b * sign * log(1 - 2 * abs(u));
+    return mu - b * double(sign) * log(1 - 2 * fabs(u));
 }
 
 
@@ -507,6 +507,9 @@ void TraceBasedCodecWithScaling::matchBitrate() {
     }
     m_highRate = (it != currentMap.end() ? it->first : 0);
 }
+
+
+
 
 
 ShapedPacketizer::ShapedPacketizer(Codec* innerCodec,
