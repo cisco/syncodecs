@@ -19,7 +19,7 @@
  * Traces reader implementation file.
  *
  * @version 0.1.0
- * @author Sergio Mena
+ * @author Sergio Mena
  * @author Stefano D'Aronco
  */
 

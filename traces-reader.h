@@ -33,7 +33,7 @@
  *
  * % Nframe | type | QP | PSNR | size (Bytes)
  * 0 I 26.67 40.23 24232
- * 1 P 28.73 39.79 1169 # This is the second frame
+ * 1 P 28.73 39.79 1169 # This is the second frame
  * 2 P 29.52 39.69 2327
  * 3 P 29.95 39.74 3217
  * 4 P 29.31 39.81 3685
@@ -42,7 +42,7 @@
  * further details.
  *
  * @version 0.1.0
- * @author Sergio Mena de la Cruz (semena@cisco.com)
+ * @author Sergio Mena de la Cruz (semena@cisco.com)
  * @author Stefano D'Aronco (stefano.daronco@epfl.ch)
  * @copyright Apache v2 License
  */

@@ -28,14 +28,14 @@
  *
  * Synthetic codecs range from the simplest (perfect codec #syncodecs::PerfectCodec) to more
  * sophisticated ones (e.g., trace-based codec #syncodecs::TraceBasedCodec). The structure of
- * the syncodecs' API is extensible: other codecs with extra functionality can be added in future
+ * the syncodecs' API is extensible: other codecs with extra functionality can be added in future
  * versions by subclassing the existing ones.
  *
  * See the documentation of each of the classes in this file for further information on the
  * particular features of the different synthetic codecs.
  *
  * @version 0.1.0
- * @author Sergio Mena de la Cruz (semena@cisco.com)
+ * @author Sergio Mena de la Cruz (semena@cisco.com)
  * @author Stefano D'Aronco (stefano.daronco@epfl.ch)
  * @author Xiaoqing Zhu (xiaoqzhu@cisco.com)
  * @copyright Apache v2 License
@@ -402,7 +402,7 @@ protected:
  *       resolutions and a set of target bitrates.
  *
  * Once the codec is set up, and so the video traces have been loaded in memory, the codec
- * transitions to valid state (the codec object will evaluate to true if cast to boolean) and
+ * transitions to valid state (the codec object will evaluate to true if cast to boolean) and
  * can henceforth be used.
  *
  * This codec's implementation mimics the operation of a real adaptive bitrate codec (ABR).
@@ -724,7 +724,7 @@ private:
  * throughout the "seconds to next frame" value of the inner codec.
  *
  * For example, consider an inner codec that has just advanced to its next frame (i.e.,
- * the shaped packetizer's implementation has just called the "++" operator in the inner codec).
+ * the shaped packetizer's implementation has just called the "++" operator in the inner codec).
  * The size of the new inner frame is 3500 bytes, and the inner "seconds to next frame" value
  * is 40ms. The user has configured the shaped packetizer with 1000 bytes as maximum payload size
  * and 0 as per-packet overhead. In this situation, the shaped packetizer will output the next
@@ -792,7 +792,7 @@ private:
 
 /**
  * This synthetic codec mimics the operation of a real codec by implementing a statistical
- * model. This model has two phases: the steady phase and the transient phase.
+ * model. This model has two phases: the steady phase and the transient phase.
  *
  * The codec is in the steady phase as long as the changes in the target rate are not
  * substantial. A change is substantial when the ratio new rate/old rate is greater
@@ -823,7 +823,7 @@ private:
  * As mentioned above, to model the noise in frame size the user can provide a different
  * implementation as a callback in the constructor.
  *
- * There is another callback provided to add noise to the (otherwise constant) frame interval
+ * There is another callback provided to add noise to the (otherwise constant) frame interval
  * configured. The default callback also implements a laplacian random distribution.
  *
  * Both default noise models have been chosen according to observations made during our study
@@ -969,7 +969,7 @@ protected:
  * codec (#StatisticsCodec ) and the trace based codec with scaling and interpolation
  * (#TraceBasedCodecWithScaling ). It is an attempt to get "the best of both worlds".
  *
- * The codec reuses the two phases defined in the statistics codec: the steady phase and
+ * The codec reuses the two phases defined in the statistics codec: the steady phase and
  * the transient phase. The way the codec transitions from the steady to the transient
  * phase matches the statistics codec: the transition occurs when the target rate undergoes
  * a substantial change. A rate change is substantial when the ratio new rate/old rate is
