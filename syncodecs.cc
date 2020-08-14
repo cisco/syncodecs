@@ -27,7 +27,6 @@
 #include "syncodecs.h"
 #include <fstream>
 #include <iostream>
-#include <cstdlib>
 #include <cmath>
 #include <cassert>
 #include <algorithm>
@@ -37,6 +36,21 @@
 #define EPSILON 1e-10  // Used to check floats/doubles for zero
 #define SCALE_T .15 // Reference scaling for frame interval noise (zero-mean laplacian distribution)
 #define SCALE_B .15 // Reference scaling for frame size (zero-mean laplacian distribution)
+
+/**
+ * Portable implementation of rand taken from the C standard, section 7.20.2
+ * See [http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf]
+ *
+ * The reason for introducing is for #SimpleContentSharingCodec to produce the same "peaks"
+ * independently of the platform/compiler used
+ *
+ */
+#define P_RAND_MAX 32767
+static unsigned long int next = 1; /* Seed */
+static int PortableRand(void) {
+    next = next * 1103515245 + 12345;
+    return (unsigned int)(next/65536) % 32768;
+}
 
 namespace syncodecs {
 
@@ -106,7 +120,7 @@ double CodecWithFps::addLaplaceInter(double seconds) {
 }
 
 double CodecWithFps::uniform(double min, double max) {
-    return double(rand()) / double(RAND_MAX) * (max - min) + min;
+    return double(PortableRand()) / double(P_RAND_MAX) * (max - min) + min;
 }
 
 double CodecWithFps::laplace(double mu, double b) {
