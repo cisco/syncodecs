@@ -125,7 +125,7 @@ double CodecWithFps::uniform(double min, double max) {
 
 double CodecWithFps::laplace(double mu, double b) {
     assert(b > 0.);
-    const double u = uniform(-.5, .5);
+    const double u = uniform(-.5 + EPSILON, .5 - EPSILON);
     const int sign = int(0 < u) - int(u < 0);
     return mu - b * double(sign) * log(1 - 2 * fabs(u));
 }
